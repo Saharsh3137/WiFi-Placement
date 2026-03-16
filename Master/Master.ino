@@ -59,11 +59,11 @@ void OnConfigSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   unsigned long now = millis();
   isConnected = true; 
-  lastRecvTime = now; 
+  
   if(len == sizeof(incoming)) {
     memcpy(&incoming, incomingData, sizeof(incoming));
     
-    // THE FIX: Raw, unfiltered ping latency 
+    // Raw, unfiltered ping latency 
     if (incoming.latency != 999) {
       displayLatency = incoming.latency;
     }
@@ -75,10 +75,15 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     }
     lastArrivalTime = now;
     
+    // --- THE STOPWATCH FIX ---
+    // A 3-second gap will cleanly reset the loss to 0 before the stopwatch updates
     if (incoming.packetId < lastPacketId || (now - lastRecvTime > 3000) || lastPacketId == 0) {
-        lastPacketId = incoming.packetId; totalPacketsLost = 0; 
+        lastPacketId = incoming.packetId; 
+        totalPacketsLost = 0; 
     } else {
-        if (incoming.packetId > lastPacketId + 1) totalPacketsLost += (incoming.packetId - lastPacketId - 1);
+        if (incoming.packetId > lastPacketId + 1) {
+            totalPacketsLost += (incoming.packetId - lastPacketId - 1);
+        }
         lastPacketId = incoming.packetId;
     }
     
@@ -88,11 +93,14 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
        lastBTSend = now; 
     }
   }
+  
+  // The stopwatch starts AFTER the math is done
+  lastRecvTime = now; 
 }
 
 void drawScanningScreen() {
   display.clearDisplay(); display.setTextColor(WHITE);
-  display.setCursor(28, 0); display.println("NET ANALYZER");
+  display.setCursor(0, 0); display.print("NET ANALYZER");
   display.setCursor(15, 25); 
   display.println(hasWiFiCreds ? "TRACKING SLAVE..." : "AWAITING BT SETUP");
   display.setCursor(35, 45); display.print("CH: "); display.print(currentChannel);
@@ -101,7 +109,11 @@ void drawScanningScreen() {
 
 void drawMainScreen() {
   display.clearDisplay(); display.setTextColor(WHITE);
-  display.setCursor(28, 0); display.println("NET ANALYZER");
+  
+  // --- NODE ID ON DISPLAY ---
+  display.setCursor(0, 0); display.print("NET ANALYZER");
+  display.setCursor(95, 0); display.print("ID:"); display.print(incoming.id); 
+  
   display.setCursor(0, 12); display.print("RSSI:"); display.print(incoming.rssi); display.print("dBm");
   display.setCursor(74, 12); display.print("SNR:"); display.print(incoming.snr);
   display.setCursor(0, 24); display.print("PING:"); display.print(displayLatency); display.print("ms");
@@ -142,10 +154,21 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // --- BLUETOOTH OTA PROVISIONING ---
+  // --- BLUETOOTH COMMAND HANDLER ---
   if (SerialBT.available()) {
     String btData = SerialBT.readStringUntil('\n'); btData.trim(); 
-    if (btData.startsWith("WIFI:")) {
+    
+    // --- NEW: REMOTE RESET COMMAND ---
+    if (btData == "RESET") {
+      totalPacketsLost = 0;
+      lastPacketId = 0;
+      jitter = 0;
+      display.clearDisplay(); display.setCursor(0, 20); display.println("STATS RESET!"); display.display();
+      delay(500);
+    }
+    
+    // --- OTA PROVISIONING ---
+    else if (btData.startsWith("WIFI:")) {
       btData.remove(0, 5); 
       int comma = btData.indexOf(','); 
       if (comma > 0) {
@@ -161,7 +184,6 @@ void loop() {
         strcpy(configMsg.ssid, nSSID.c_str());
         strcpy(configMsg.password, nPass.c_str());
 
-        // --- OVER THE AIR UPDATE SWEEP ---
         display.clearDisplay(); display.setCursor(0, 20); display.println("UPDATING SLAVE..."); display.display();
         Serial.println("\nExecuting Over-The-Air Update Sweep...");
         WiFi.disconnect();
