@@ -10,7 +10,6 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
-        <!-- HEADER -->
         <TextView
             android:text="Wireless Network Monitor"
             android:textSize="22sp"
@@ -20,7 +19,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
 
-        <!-- STATUS -->
         <TextView
             android:id="@+id/statusText"
             android:text="Status: Disconnected"
@@ -59,7 +57,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
 
-        <!-- BUTTONS -->
         <LinearLayout
             android:orientation="horizontal"
             android:layout_marginBottom="20dp"
@@ -85,7 +82,57 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- RSSI -->
+        <LinearLayout
+            android:id="@+id/provisioningLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#1A2235"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp"
+            android:visibility="gone">
+
+            <TextView
+                android:text="Deploy Wi-Fi to Nodes"
+                android:textSize="18sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:layout_marginBottom="12dp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+
+            <EditText
+                android:id="@+id/ssidInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Wi-Fi Name (SSID)"
+                android:textColorHint="#888888"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#00E5FF"
+                android:inputType="textNoSuggestions"
+                android:layout_marginBottom="8dp"/>
+
+            <EditText
+                android:id="@+id/passInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Wi-Fi Password"
+                android:textColorHint="#888888"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#00E5FF"
+                android:inputType="textPassword"
+                android:layout_marginBottom="16dp"/>
+
+            <Button
+                android:id="@+id/deployButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:backgroundTint="#00E5FF"
+                android:text="Send to Network"
+                android:textColor="#0B0F1A"
+                android:textStyle="bold"/>
+        </LinearLayout>
+
         <TextView
             android:id="@+id/rssiTitle"
             android:text="RSSI (Live)"
@@ -101,7 +148,6 @@
             android:layout_width="match_parent"
             android:layout_height="220dp"/>
 
-        <!-- LATENCY -->
         <TextView
             android:id="@+id/latencyTitle"
             android:text="Latency (Live)"
@@ -118,7 +164,6 @@
             android:layout_width="match_parent"
             android:layout_height="220dp"/>
 
-        <!-- PACKET LOSS -->
         <TextView
             android:id="@+id/packetTitle"
             android:text="Packet Loss (Live)"

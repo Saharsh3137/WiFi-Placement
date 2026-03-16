@@ -10,7 +10,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
@@ -22,6 +25,7 @@ import com.github.mikephil.charting.data.LineData;
 import com.github.mikephil.charting.data.LineDataSet;
 
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.UUID;
 
 public class MainActivity extends ComponentActivity {
@@ -29,12 +33,18 @@ public class MainActivity extends ComponentActivity {
     private TextView statusText, rssiText, latencyText, packetLossText, qualityText;
     private Button connectButton, disconnectButton;
 
+    // UI elements for Provisioning
+    private EditText ssidInput, passInput;
+    private Button deployButton;
+    private LinearLayout provisioningLayout;
+
     private LineChart rssiChart, latencyChart, packetChart;
     private LineData rssiData, latencyData, packetData;
 
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothSocket socket;
     private InputStream inputStream;
+    private OutputStream outputStream;
 
     private final String DEVICE_ADDRESS = "B0:CB:D8:C6:66:7E";
     private final UUID uuid =
@@ -57,6 +67,12 @@ public class MainActivity extends ComponentActivity {
 
         connectButton = findViewById(R.id.connectButton);
         disconnectButton = findViewById(R.id.disconnectButton);
+
+        // Initialize Provisioning Elements
+        provisioningLayout = findViewById(R.id.provisioningLayout);
+        ssidInput = findViewById(R.id.ssidInput);
+        passInput = findViewById(R.id.passInput);
+        deployButton = findViewById(R.id.deployButton);
 
         rssiChart = findViewById(R.id.rssiChart);
         latencyChart = findViewById(R.id.latencyChart);
@@ -83,38 +99,32 @@ public class MainActivity extends ComponentActivity {
         });
 
         disconnectButton.setOnClickListener(v -> disconnectBluetooth());
+
+        // Listener for sending the Wi-Fi credentials
+        deployButton.setOnClickListener(v -> sendWiFiCredentials());
     }
 
     private void setupChart(LineChart chart) {
-
         LineData data = new LineData();
         chart.setData(data);
-
         chart.setBackgroundColor(Color.parseColor("#121826"));
         chart.getDescription().setEnabled(false);
         chart.getLegend().setEnabled(false);
-
         chart.setDrawGridBackground(false);
         chart.setDrawBorders(false);
-
         chart.getAxisRight().setEnabled(false);
-
         chart.getXAxis().setDrawGridLines(false);
         chart.getAxisLeft().setDrawGridLines(false);
-
         chart.getXAxis().setTextColor(Color.GRAY);
         chart.getAxisLeft().setTextColor(Color.GRAY);
-
         chart.setTouchEnabled(true);
         chart.setDragEnabled(true);
         chart.setScaleEnabled(false);
     }
 
-
     private void connectBluetooth() {
         new Thread(() -> {
             try {
-
                 if (ActivityCompat.checkSelfPermission(this,
                         Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -131,14 +141,20 @@ public class MainActivity extends ComponentActivity {
                 socket = device.createRfcommSocketToServiceRecord(uuid);
                 socket.connect();
 
+                // Open streams for sending and receiving data
+                inputStream = socket.getInputStream();
+                outputStream = socket.getOutputStream();
+
                 runOnUiThread(() -> {
                     statusText.setText("Status: Connected");
                     statusText.setTextColor(Color.GREEN);
                     connectButton.setVisibility(View.GONE);
                     disconnectButton.setVisibility(View.VISIBLE);
+
+                    // Show the Wi-Fi setup box
+                    provisioningLayout.setVisibility(View.VISIBLE);
                 });
 
-                inputStream = socket.getInputStream();
                 readData();
 
             } catch (Exception e) {
@@ -161,7 +177,44 @@ public class MainActivity extends ComponentActivity {
             connectButton.setVisibility(View.VISIBLE);
             disconnectButton.setVisibility(View.GONE);
 
+            // Hide the Wi-Fi setup box
+            provisioningLayout.setVisibility(View.GONE);
+
         } catch (Exception ignored) {}
+    }
+
+    private void sendWiFiCredentials() {
+        if (socket == null || !socket.isConnected() || outputStream == null) {
+            Toast.makeText(this, "Bluetooth not connected!", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String ssid = ssidInput.getText().toString().trim();
+        String pass = passInput.getText().toString().trim();
+
+        if (ssid.isEmpty() || pass.isEmpty()) {
+            Toast.makeText(this, "SSID and Password cannot be empty", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // The ESP32 expects: WIFI:NetworkName,Password\n
+        String payload = "WIFI:" + ssid + "," + pass + "\n";
+
+        new Thread(() -> {
+            try {
+                outputStream.write(payload.getBytes());
+                outputStream.flush();
+
+                runOnUiThread(() -> {
+                    Toast.makeText(MainActivity.this, "Credentials Sent!", Toast.LENGTH_LONG).show();
+                    // Optional: Clear password after sending
+                    passInput.setText("");
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Failed to send data", Toast.LENGTH_SHORT).show());
+                e.printStackTrace();
+            }
+        }).start();
     }
 
     private void readData() {
@@ -179,6 +232,7 @@ public class MainActivity extends ComponentActivity {
                         statusText.setTextColor(Color.RED);
                         connectButton.setVisibility(View.VISIBLE);
                         disconnectButton.setVisibility(View.GONE);
+                        provisioningLayout.setVisibility(View.GONE);
                     });
                     break;
                 }
@@ -212,14 +266,12 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void addEntry(LineChart chart, float value, int index) {
-
         LineData data = chart.getData();
         LineDataSet dataSet;
 
         if (data.getDataSetCount() == 0) {
             dataSet = new LineDataSet(null, "Live Data");
-
-            dataSet.setMode(LineDataSet.Mode.CUBIC_BEZIER);  // Smooth curves
+            dataSet.setMode(LineDataSet.Mode.CUBIC_BEZIER);
             dataSet.setColor(Color.parseColor("#00E5FF"));
             dataSet.setLineWidth(2.5f);
             dataSet.setDrawCircles(false);
@@ -240,7 +292,6 @@ public class MainActivity extends ComponentActivity {
         chart.setVisibleXRangeMaximum(40);
         chart.moveViewToX(data.getEntryCount());
     }
-
 
     private String getSignalQuality(int rssi) {
         if (rssi > -60) return "Excellent";
