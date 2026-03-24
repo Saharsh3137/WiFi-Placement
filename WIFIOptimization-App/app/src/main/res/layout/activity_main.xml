@@ -153,58 +153,41 @@
         </LinearLayout>
 
         <!-- NODE SELECT -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="16dp">
-
-            <Button
-                android:id="@+id/overallBtn"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:text="Overall"
-                android:textSize="13sp"/>
-
-            <Button
-                android:id="@+id/node1Btn"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:text="N1"
-                android:textSize="13sp"/>
-
-            <Button
-                android:id="@+id/node2Btn"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:text="N2"
-                android:textSize="13sp"/>
-
-            <Button
-                android:id="@+id/node3Btn"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:text="N3"
-                android:textSize="13sp"/>
-        </LinearLayout>
 
         <!-- GRAPHS -->
+        <TextView
+            android:text="RSSI (dBm):"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:layout_marginTop="10dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
         <com.github.mikephil.charting.charts.LineChart
             android:id="@+id/rssiChart"
             android:layout_width="match_parent"
             android:layout_height="200dp"
             android:layout_marginTop="16dp"/>
 
+        <TextView
+            android:text="Latency (ms):"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:layout_marginTop="10dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
         <com.github.mikephil.charting.charts.LineChart
             android:id="@+id/latencyChart"
             android:layout_width="match_parent"
             android:layout_height="200dp"
             android:layout_marginTop="12dp"/>
 
+        <TextView
+            android:text="Packet Loss (%):"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:layout_marginTop="10dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
         <com.github.mikephil.charting.charts.LineChart
             android:id="@+id/packetChart"
             android:layout_width="match_parent"

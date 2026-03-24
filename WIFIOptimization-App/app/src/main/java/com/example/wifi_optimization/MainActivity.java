@@ -24,7 +24,8 @@ public class MainActivity extends ComponentActivity {
     Button connectButton, disconnectButton, sendWifiBtn;
     EditText ssidInput, passInput;
     LinearLayout wifiLayout;
-
+    boolean isProvisioning = false;
+    boolean wifiAlreadySent = false;
     LineChart rssiChart, latencyChart, packetChart;
 
     BluetoothAdapter bluetoothAdapter;
@@ -41,7 +42,6 @@ public class MainActivity extends ComponentActivity {
     }
 
     NodeData[] nodes = new NodeData[3];
-    int currentView = -1;
 
     int i1 = 0, i2 = 0, i3 = 0;
 
@@ -70,8 +70,13 @@ public class MainActivity extends ComponentActivity {
         packetChart = findViewById(R.id.packetChart);
 
         setupChart(rssiChart);
+        initChartData(rssiChart);
+
         setupChart(latencyChart);
+        initChartData(latencyChart);
+
         setupChart(packetChart);
+        initChartData(packetChart);
 
         for (int i = 0; i < 3; i++) nodes[i] = new NodeData();
 
@@ -90,10 +95,6 @@ public class MainActivity extends ComponentActivity {
         disconnectButton.setOnClickListener(v -> disconnectBT());
         sendWifiBtn.setOnClickListener(v -> sendWiFiCredentials());
 
-        findViewById(R.id.overallBtn).setOnClickListener(v -> currentView = -1);
-        findViewById(R.id.node1Btn).setOnClickListener(v -> currentView = 0);
-        findViewById(R.id.node2Btn).setOnClickListener(v -> currentView = 1);
-        findViewById(R.id.node3Btn).setOnClickListener(v -> currentView = 2);
     }
 
     // ---------------- BLUETOOTH ----------------
@@ -121,7 +122,11 @@ public class MainActivity extends ComponentActivity {
                     connectButton.setVisibility(View.GONE);
                     disconnectButton.setVisibility(View.VISIBLE);
 
-                    wifiLayout.setVisibility(View.VISIBLE);
+                    if (!wifiAlreadySent) {
+                        wifiLayout.setVisibility(View.VISIBLE);
+                    } else {
+                        wifiLayout.setVisibility(View.GONE);
+                    }
                 });
 
                 readData();
@@ -157,7 +162,7 @@ public class MainActivity extends ComponentActivity {
             Toast.makeText(this, "Bluetooth not connected!", Toast.LENGTH_SHORT).show();
             return;
         }
-
+        wifiAlreadySent = true;
         String ssid = ssidInput.getText().toString().trim();
         String pass = passInput.getText().toString().trim();
 
@@ -170,28 +175,23 @@ public class MainActivity extends ComponentActivity {
 
         new Thread(() -> {
             try {
+                isProvisioning = true;
+
                 outputStream.write(payload.getBytes());
                 outputStream.flush();
 
                 runOnUiThread(() -> {
-                    Toast.makeText(MainActivity.this, "Credentials Sent!", Toast.LENGTH_LONG).show();
+                    Toast.makeText(MainActivity.this, "Deploying WiFi...", Toast.LENGTH_SHORT).show();
 
-                    // ✅ HIDE WIFI UI AFTER SUCCESS
+                    // UI updates
                     wifiLayout.setVisibility(View.GONE);
-
-                    // OPTIONAL: Clear fields
-                    ssidInput.setText("");
-                    passInput.setText("");
-
-                    // OPTIONAL: Update status
-                    statusText.setText("Deploying to Nodes...");
-                    statusText.setTextColor(Color.parseColor("#00E5FF"));
+                    statusText.setText("Deploying...");
+                    statusText.setTextColor(Color.CYAN);
                 });
 
             } catch (Exception e) {
                 runOnUiThread(() ->
-                        Toast.makeText(MainActivity.this, "Failed to send data", Toast.LENGTH_SHORT).show());
-                e.printStackTrace();
+                        Toast.makeText(MainActivity.this, "Failed to send", Toast.LENGTH_SHORT).show());
             }
         }).start();
     }
@@ -207,12 +207,42 @@ public class MainActivity extends ComponentActivity {
                     int n = inputStream.read(buf);
                     process(new String(buf, 0, n));
                 } catch (Exception e) {
+
+                    runOnUiThread(() -> {
+                        if (isProvisioning) {
+                            statusText.setText("Rebooting ESP32...");
+                            statusText.setTextColor(Color.YELLOW);
+                        } else {
+                            statusText.setText("Disconnected");
+                            statusText.setTextColor(Color.RED);
+                        }
+
+                        connectButton.setVisibility(View.VISIBLE);
+                        disconnectButton.setVisibility(View.GONE);
+                    });
+
+                    if (isProvisioning) {
+                        reconnectBluetooth();
+                    }
+
                     break;
                 }
             }
         }).start();
     }
+    private void reconnectBluetooth() {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
 
+            statusText.setText("Reconnecting...");
+            statusText.setTextColor(Color.YELLOW);
+
+            connectBT();
+
+            // reset flag after reconnect attempt
+            isProvisioning = false;
+
+        }, 4000); // wait for ESP32 reboot
+    }
     private void process(String d) {
         runOnUiThread(() -> {
             try {
@@ -233,17 +263,56 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void updateUI() {
-        NodeData d = (currentView == -1) ? avg() : nodes[currentView];
 
-        rssiText.setText("RSSI: " + d.rssi);
-        latencyText.setText("Latency: " + d.latency);
-        packetLossText.setText("Loss: " + d.loss);
+        NodeData avg = avg();
+        rssiText.setText("Avg RSSI: " + avg.rssi);
+        latencyText.setText("Avg Latency: " + avg.latency);
+        packetLossText.setText("Avg Loss: " + avg.loss);
 
         updateStatus();
+        updateGraphs();
+    }
 
-        add(rssiChart, d.rssi, i1++);
-        add(latencyChart, d.latency, i2++);
-        add(packetChart, d.loss, i3++);
+    private void updateGraphs() {
+
+        LineData rssiData = rssiChart.getData();
+        LineData latencyData = latencyChart.getData();
+        LineData packetData = packetChart.getData();
+
+        NodeData avg = avg();
+
+        for (int i = 0; i < 3; i++) {
+
+            NodeData n = nodes[i];
+
+            if (System.currentTimeMillis() - n.lastUpdate < 5000) {
+
+                rssiData.addEntry(new Entry(i1, n.rssi), i);
+                latencyData.addEntry(new Entry(i2, n.latency), i);
+                packetData.addEntry(new Entry(i3, n.loss), i);
+            }
+        }
+
+        // ⭐ Average line (dataset index 3)
+        rssiData.addEntry(new Entry(i1, avg.rssi), 3);
+        latencyData.addEntry(new Entry(i2, avg.latency), 3);
+        packetData.addEntry(new Entry(i3, avg.loss), 3);
+
+        rssiData.notifyDataChanged();
+        latencyData.notifyDataChanged();
+        packetData.notifyDataChanged();
+
+        rssiChart.notifyDataSetChanged();
+        latencyChart.notifyDataSetChanged();
+        packetChart.notifyDataSetChanged();
+
+        rssiChart.moveViewToX(i1);
+        latencyChart.moveViewToX(i2);
+        packetChart.moveViewToX(i3);
+
+        i1++;
+        i2++;
+        i3++;
     }
 
     private NodeData avg() {
@@ -277,27 +346,74 @@ public class MainActivity extends ComponentActivity {
         nodeStatusText.setText(s);
     }
 
-    private void setupChart(LineChart c) {
-        c.setData(new LineData());
-        c.getDescription().setEnabled(false);
-        c.getAxisRight().setEnabled(false);
+    private void setupChart(LineChart chart) {
+
+        chart.setData(new LineData());
+        chart.getLegend().setTextColor(Color.WHITE);
+
+        chart.getDescription().setEnabled(false);
+        chart.getLegend().setEnabled(true);
+
+        chart.setDrawGridBackground(false);
+        chart.setDrawBorders(false);
+
+        chart.getAxisRight().setEnabled(false);
+
+        // ❌ REMOVE GRID LINES
+        chart.getXAxis().setDrawGridLines(false);
+        chart.getAxisLeft().setDrawGridLines(false);
+
+        chart.getXAxis().setDrawAxisLine(false);
+        chart.getAxisLeft().setDrawAxisLine(false);
+
+        chart.getXAxis().setTextColor(Color.GRAY);
+        chart.getAxisLeft().setTextColor(Color.GRAY);
+
+        chart.setTouchEnabled(true);
+        chart.setDragEnabled(true);
+        chart.setScaleEnabled(false);
+
+        chart.setBackgroundColor(Color.parseColor("#0B0F1A"));
     }
 
-    private void add(LineChart c, float v, int i) {
-        LineData d = c.getData();
-        LineDataSet s;
+    private void initChartData(LineChart chart) {
 
-        if (d.getDataSetCount() == 0) {
-            s = new LineDataSet(null, "data");
-            s.setMode(LineDataSet.Mode.CUBIC_BEZIER);
-            s.setColor(Color.CYAN);
-            s.setDrawCircles(false);
-            d.addDataSet(s);
-        } else s = (LineDataSet) d.getDataSetByIndex(0);
+        LineData data = new LineData();
 
-        d.addEntry(new Entry(i, v), 0);
-        d.notifyDataChanged();
-        c.notifyDataSetChanged();
-        c.moveViewToX(d.getEntryCount());
+        // Node 1
+        LineDataSet n1 = new LineDataSet(null, "Node 1");
+        n1.setColor(Color.RED);
+        n1.setDrawCircles(false);
+        n1.setMode(LineDataSet.Mode.CUBIC_BEZIER);
+        n1.setLineWidth(2f);
+
+        // Node 2
+        LineDataSet n2 = new LineDataSet(null, "Node 2");
+        n2.setColor(Color.GREEN);
+        n2.setDrawCircles(false);
+        n2.setMode(LineDataSet.Mode.CUBIC_BEZIER);
+        n2.setLineWidth(2f);
+
+        // Node 3
+        LineDataSet n3 = new LineDataSet(null, "Node 3");
+        n3.setColor(Color.YELLOW);
+        n3.setDrawCircles(false);
+        n3.setMode(LineDataSet.Mode.CUBIC_BEZIER);
+        n3.setLineWidth(2f);
+
+        // Average ⭐
+        LineDataSet avg = new LineDataSet(null, "Average");
+        avg.setColor(Color.WHITE);
+        avg.setDrawCircles(false);
+        avg.setMode(LineDataSet.Mode.CUBIC_BEZIER);
+        avg.setLineWidth(3f);
+        avg.enableDashedLine(10f, 5f, 0f);
+
+        data.addDataSet(n1);
+        data.addDataSet(n2);
+        data.addDataSet(n3);
+        data.addDataSet(avg);
+
+        chart.setData(data);
     }
 }
