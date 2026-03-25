@@ -7,133 +7,223 @@ import android.graphics.Color;
 import android.os.*;
 import android.view.View;
 import android.widget.*;
-
-import androidx.activity.ComponentActivity;
+import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
-
 import com.github.mikephil.charting.charts.LineChart;
 import com.github.mikephil.charting.data.*;
-
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.UUID;
+import java.util.Random;
+import java.util.Locale;
+import java.util.ArrayList;
 
-public class MainActivity extends ComponentActivity {
+public class MainActivity extends AppCompatActivity {
 
-    TextView statusText, nodeStatusText, rssiText, latencyText, packetLossText, qualityText;
-    Button connectButton, disconnectButton, sendWifiBtn;
+    // UI Elements
+    TextView statusText, nodeStatusText, qualityText;
+    TextView rssiText, latencyText, packetLossText;
+    Button connectButton, disconnectButton, sendWifiBtn, toggleWifiBtn, resetStatsBtn;
     EditText ssidInput, passInput;
-    LinearLayout wifiLayout;
-    boolean isProvisioning = false;
-    boolean wifiAlreadySent = false;
+    View wifiCard, tabDashboard, tabAnalytics, tabPlacement;
+    Button navDash, navAnalytics, navPlacement;
+    Switch demoModeSwitch;
     LineChart rssiChart, latencyChart, packetChart;
 
+    // Bluetooth
     BluetoothAdapter bluetoothAdapter;
     BluetoothSocket socket;
     InputStream inputStream;
     OutputStream outputStream;
-
     String DEVICE_ADDRESS = "B0:CB:D8:C6:66:7E";
     UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+    boolean isProvisioning = false;
 
+    // Data Model
     class NodeData {
-        float rssi, latency, loss;
+        float rssi, snr, voltage, loss, latency, jitter;
         long lastUpdate;
     }
-
     NodeData[] nodes = new NodeData[3];
+    int graphIndex = 0;
 
-    int i1 = 0, i2 = 0, i3 = 0;
+    // Handlers
+    Handler uiHandler = new Handler(Looper.getMainLooper());
+    Runnable uiRefreshRunnable;
+    Handler demoHandler = new Handler(Looper.getMainLooper());
+    Runnable demoRunnable;
+    Random random = new Random();
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_main);
 
+        // Bind UI
         statusText = findViewById(R.id.statusText);
         nodeStatusText = findViewById(R.id.nodeStatusText);
+        qualityText = findViewById(R.id.qualityText);
         rssiText = findViewById(R.id.rssiText);
         latencyText = findViewById(R.id.latencyText);
         packetLossText = findViewById(R.id.packetLossText);
-        qualityText = findViewById(R.id.qualityText);
 
         connectButton = findViewById(R.id.connectButton);
         disconnectButton = findViewById(R.id.disconnectButton);
+        sendWifiBtn = findViewById(R.id.sendWifiBtn);
+        toggleWifiBtn = findViewById(R.id.toggleWifiBtn);
+        resetStatsBtn = findViewById(R.id.resetStatsBtn);
 
-        wifiLayout = findViewById(R.id.wifiLayout);
         ssidInput = findViewById(R.id.ssidInput);
         passInput = findViewById(R.id.passInput);
-        sendWifiBtn = findViewById(R.id.sendWifiBtn);
+        wifiCard = findViewById(R.id.wifiCard);
+        demoModeSwitch = findViewById(R.id.demoModeSwitch);
+
+        tabDashboard = findViewById(R.id.tabDashboard);
+        tabAnalytics = findViewById(R.id.tabAnalytics);
+        tabPlacement = findViewById(R.id.tabPlacement);
+        navDash = findViewById(R.id.navDash);
+        navAnalytics = findViewById(R.id.navAnalytics);
+        navPlacement = findViewById(R.id.navPlacement);
 
         rssiChart = findViewById(R.id.rssiChart);
         latencyChart = findViewById(R.id.latencyChart);
         packetChart = findViewById(R.id.packetChart);
 
-        setupChart(rssiChart);
-        initChartData(rssiChart);
-
-        setupChart(latencyChart);
-        initChartData(latencyChart);
-
-        setupChart(packetChart);
-        initChartData(packetChart);
-
         for (int i = 0; i < 3; i++) nodes[i] = new NodeData();
+
+        setupChart(rssiChart); initChartData(rssiChart);
+        setupChart(latencyChart); initChartData(latencyChart);
+        setupChart(packetChart); initChartData(packetChart);
 
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
 
-        // Permissions (Android 12+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ActivityCompat.requestPermissions(this,
-                    new String[]{
-                            Manifest.permission.BLUETOOTH_CONNECT,
-                            Manifest.permission.BLUETOOTH_SCAN
-                    }, 1);
+                    new String[]{Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN}, 1);
         }
 
+        // Listeners
         connectButton.setOnClickListener(v -> connectBT());
         disconnectButton.setOnClickListener(v -> disconnectBT());
         sendWifiBtn.setOnClickListener(v -> sendWiFiCredentials());
 
+        // NEW: Toggle WiFi Card Visibility
+        toggleWifiBtn.setOnClickListener(v -> {
+            if (wifiCard.getVisibility() == View.VISIBLE) {
+                wifiCard.setVisibility(View.GONE);
+            } else {
+                wifiCard.setVisibility(View.VISIBLE);
+            }
+        });
+
+        // NEW: Reset Session Data
+        resetStatsBtn.setOnClickListener(v -> resetSessionData());
+
+        setupNavigation();
+        setupDemoMode();
+
+        uiRefreshRunnable = new Runnable() {
+            @Override
+            public void run() {
+                updateUI();
+                uiHandler.postDelayed(this, 200);
+            }
+        };
+        uiHandler.post(uiRefreshRunnable);
     }
 
-    // ---------------- BLUETOOTH ----------------
+    // --- NEW: WIPE DATA CLEAN FOR NEW ROOM MEASUREMENT ---
+    private void resetSessionData() {
+        for (int i = 0; i < 3; i++) nodes[i] = new NodeData();
+        graphIndex = 0;
+
+        rssiChart.clear(); initChartData(rssiChart);
+        latencyChart.clear(); initChartData(latencyChart);
+        packetChart.clear(); initChartData(packetChart);
+
+        qualityText.setText("--/100");
+        Toast.makeText(this, "Session Data Cleared", Toast.LENGTH_SHORT).show();
+        updateUI();
+    }
+
+    private void setupNavigation() {
+        navDash.setOnClickListener(v -> switchTab(tabDashboard, navDash));
+        navAnalytics.setOnClickListener(v -> switchTab(tabAnalytics, navAnalytics));
+        navPlacement.setOnClickListener(v -> switchTab(tabPlacement, navPlacement));
+    }
+
+    private void switchTab(View activeTab, Button activeBtn) {
+        tabDashboard.setVisibility(View.GONE);
+        tabAnalytics.setVisibility(View.GONE);
+        tabPlacement.setVisibility(View.GONE);
+        navDash.setTextColor(Color.parseColor("#888888"));
+        navAnalytics.setTextColor(Color.parseColor("#888888"));
+        navPlacement.setTextColor(Color.parseColor("#888888"));
+
+        activeTab.setVisibility(View.VISIBLE);
+        activeBtn.setTextColor(Color.parseColor("#00E5FF"));
+    }
+
+    private void setupDemoMode() {
+        demoModeSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked) {
+                disconnectBT();
+                statusText.setText("Demo Mode Active");
+                statusText.setTextColor(Color.parseColor("#FFD740"));
+                wifiCard.setVisibility(View.GONE);
+
+                demoRunnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        for(int i = 1; i <= 3; i++) {
+                            int r = -40 - random.nextInt(40);
+                            int s = 20 + random.nextInt(30);
+                            // Generate realistic LiPo voltage (3.2V - 4.2V)
+                            float v = 3.2f + (random.nextFloat() * 1.0f);
+                            float l = random.nextFloat() < 0.1 ? 5.0f : 0.0f;
+                            int j = random.nextInt(10);
+                            int p = 5 + random.nextInt(25);
+
+                            String fakeData = String.format(Locale.US, "%d,%d,%d,%.2f,%.2f,%d,%d\n", i, r, s, v, l, j, p);
+                            process(fakeData);
+                        }
+                        demoHandler.postDelayed(this, 200);
+                    }
+                };
+                demoHandler.post(demoRunnable);
+            } else {
+                demoHandler.removeCallbacks(demoRunnable);
+                statusText.setText("Disconnected");
+                statusText.setTextColor(Color.parseColor("#FF5252"));
+                resetSessionData(); // Clean up demo graphs
+            }
+        });
+    }
 
     private void connectBT() {
+        if (demoModeSwitch.isChecked()) return;
         statusText.setText("Connecting...");
         statusText.setTextColor(Color.YELLOW);
 
         new Thread(() -> {
             try {
                 BluetoothDevice device = bluetoothAdapter.getRemoteDevice(DEVICE_ADDRESS);
-
                 bluetoothAdapter.cancelDiscovery();
-
                 socket = device.createRfcommSocketToServiceRecord(uuid);
                 socket.connect();
-
                 inputStream = socket.getInputStream();
                 outputStream = socket.getOutputStream();
 
                 runOnUiThread(() -> {
-                    statusText.setText("Connected");
+                    statusText.setText("Connected to Master");
                     statusText.setTextColor(Color.GREEN);
-
                     connectButton.setVisibility(View.GONE);
                     disconnectButton.setVisibility(View.VISIBLE);
-
-                    if (!wifiAlreadySent) {
-                        wifiLayout.setVisibility(View.VISIBLE);
-                    } else {
-                        wifiLayout.setVisibility(View.GONE);
-                    }
                 });
-
                 readData();
-
             } catch (Exception e) {
-                e.printStackTrace();
-
                 runOnUiThread(() -> {
                     statusText.setText("Connection Failed");
                     statusText.setTextColor(Color.RED);
@@ -143,31 +233,24 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void disconnectBT() {
-        try {
-            if (socket != null) socket.close();
-        } catch (Exception ignored) {}
-
+        try { if (socket != null) socket.close(); } catch (Exception ignored) {}
         statusText.setText("Disconnected");
         statusText.setTextColor(Color.RED);
-
         connectButton.setVisibility(View.VISIBLE);
         disconnectButton.setVisibility(View.GONE);
-        wifiLayout.setVisibility(View.GONE);
+        wifiCard.setVisibility(View.GONE);
     }
-
-    // ---------------- YOUR ORIGINAL WORKING METHOD ----------------
 
     private void sendWiFiCredentials() {
         if (socket == null || !socket.isConnected() || outputStream == null) {
             Toast.makeText(this, "Bluetooth not connected!", Toast.LENGTH_SHORT).show();
             return;
         }
-        wifiAlreadySent = true;
         String ssid = ssidInput.getText().toString().trim();
         String pass = passInput.getText().toString().trim();
 
         if (ssid.isEmpty() || pass.isEmpty()) {
-            Toast.makeText(this, "SSID and Password cannot be empty", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "SSID and Pass cannot be empty", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -176,244 +259,183 @@ public class MainActivity extends ComponentActivity {
         new Thread(() -> {
             try {
                 isProvisioning = true;
-
                 outputStream.write(payload.getBytes());
                 outputStream.flush();
 
                 runOnUiThread(() -> {
                     Toast.makeText(MainActivity.this, "Deploying WiFi...", Toast.LENGTH_SHORT).show();
-
-                    // UI updates
-                    wifiLayout.setVisibility(View.GONE);
+                    wifiCard.setVisibility(View.GONE); // Hide it after sending
                     statusText.setText("Deploying...");
                     statusText.setTextColor(Color.CYAN);
                 });
-
             } catch (Exception e) {
-                runOnUiThread(() ->
-                        Toast.makeText(MainActivity.this, "Failed to send", Toast.LENGTH_SHORT).show());
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Failed", Toast.LENGTH_SHORT).show());
             }
         }).start();
     }
-
-    // ---------------- DATA ----------------
 
     private void readData() {
         new Thread(() -> {
-            byte[] buf = new byte[1024];
-
-            while (true) {
-                try {
-                    int n = inputStream.read(buf);
-                    process(new String(buf, 0, n));
-                } catch (Exception e) {
-
-                    runOnUiThread(() -> {
-                        if (isProvisioning) {
-                            statusText.setText("Rebooting ESP32...");
-                            statusText.setTextColor(Color.YELLOW);
-                        } else {
-                            statusText.setText("Disconnected");
-                            statusText.setTextColor(Color.RED);
-                        }
-
-                        connectButton.setVisibility(View.VISIBLE);
-                        disconnectButton.setVisibility(View.GONE);
-                    });
-
-                    if (isProvisioning) {
-                        reconnectBluetooth();
-                    }
-
-                    break;
+            try {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    process(line);
                 }
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    if (isProvisioning) {
+                        statusText.setText("Rebooting ESP32...");
+                        statusText.setTextColor(Color.YELLOW);
+                    } else {
+                        disconnectBT();
+                    }
+                });
+                if (isProvisioning) reconnectBluetooth();
             }
         }).start();
     }
+
     private void reconnectBluetooth() {
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-
             statusText.setText("Reconnecting...");
             statusText.setTextColor(Color.YELLOW);
-
             connectBT();
-
-            // reset flag after reconnect attempt
             isProvisioning = false;
-
-        }, 4000); // wait for ESP32 reboot
+        }, 4000);
     }
+
     private void process(String d) {
-        runOnUiThread(() -> {
-            try {
-                String[] p = d.trim().split(",");
-                if (p.length < 7) return;
+        try {
+            String clean = d.replaceAll("[\\n\\r]", "").trim();
+            String[] p = clean.split(",");
+            if (p.length < 7) return;
 
-                int id = Integer.parseInt(p[0]) - 1;
-
+            int id = Integer.parseInt(p[0]) - 1;
+            if(id >= 0 && id < 3) {
                 nodes[id].rssi = Float.parseFloat(p[1]);
+                nodes[id].snr = Float.parseFloat(p[2]);
+                nodes[id].voltage = Float.parseFloat(p[3]);
                 nodes[id].loss = Float.parseFloat(p[4]);
+                nodes[id].jitter = Float.parseFloat(p[5]);
                 nodes[id].latency = Float.parseFloat(p[6]);
                 nodes[id].lastUpdate = System.currentTimeMillis();
-
-                updateUI();
-
-            } catch (Exception ignored) {}
-        });
+            }
+        } catch (Exception ignored) {}
     }
 
     private void updateUI() {
+        NodeData avg = getAverages();
+        rssiText.setText(String.format(Locale.US, "Avg RSSI: %.1f dBm", avg.rssi));
+        latencyText.setText(String.format(Locale.US, "Avg Ping: %.1f ms", avg.latency));
+        packetLossText.setText(String.format(Locale.US, "Avg Loss: %.1f %%", avg.loss));
 
-        NodeData avg = avg();
-        rssiText.setText("Avg RSSI: " + avg.rssi);
-        latencyText.setText("Avg Latency: " + avg.latency);
-        packetLossText.setText("Avg Loss: " + avg.loss);
+        float finalScore = 0;
+        if(avg.rssi != 0) {
+            float rssiScore = Math.max(0, Math.min(100, (avg.rssi + 85) * (100f / 45f)));
+            finalScore = rssiScore - (avg.latency > 30 ? 15 : 0) - (avg.loss * 2);
+            finalScore = Math.max(0, finalScore);
+            qualityText.setText(String.format(Locale.US, "%.0f/100", finalScore));
+        }
 
-        updateStatus();
-        updateGraphs();
+        // --- NEW: Dynamic Battery & Ping Fleet Panel ---
+        StringBuilder s = new StringBuilder();
+        for (int i = 0; i < 3; i++) {
+            boolean isOnline = (System.currentTimeMillis() - nodes[i].lastUpdate < 5000) && nodes[i].lastUpdate != 0;
+
+            s.append("Node ").append(i + 1).append(": ");
+
+            if (isOnline) {
+                s.append("🟢 ")
+                        .append(String.format(Locale.US, "%.0fms", nodes[i].latency))
+                        .append("  |  🔋 ")
+                        .append(String.format(Locale.US, "%.1fV", nodes[i].voltage));
+            } else {
+                s.append("🔴 Offline");
+            }
+            if (i < 2) s.append("\n");
+        }
+        nodeStatusText.setText(s.toString());
+
+        updateGraphs(avg);
     }
 
-    private void updateGraphs() {
-
+    private void updateGraphs(NodeData avg) {
         LineData rssiData = rssiChart.getData();
         LineData latencyData = latencyChart.getData();
         LineData packetData = packetChart.getData();
 
-        NodeData avg = avg();
+        int activeNodes = 0;
 
         for (int i = 0; i < 3; i++) {
-
             NodeData n = nodes[i];
-
-            if (System.currentTimeMillis() - n.lastUpdate < 5000) {
-
-                rssiData.addEntry(new Entry(i1, n.rssi), i);
-                latencyData.addEntry(new Entry(i2, n.latency), i);
-                packetData.addEntry(new Entry(i3, n.loss), i);
+            if (System.currentTimeMillis() - n.lastUpdate < 5000 && n.lastUpdate != 0) {
+                rssiData.addEntry(new Entry(graphIndex, n.rssi), i);
+                latencyData.addEntry(new Entry(graphIndex, n.latency), i);
+                packetData.addEntry(new Entry(graphIndex, n.loss), i);
+                activeNodes++;
             }
         }
 
-        // ⭐ Average line (dataset index 3)
-        rssiData.addEntry(new Entry(i1, avg.rssi), 3);
-        latencyData.addEntry(new Entry(i2, avg.latency), 3);
-        packetData.addEntry(new Entry(i3, avg.loss), 3);
+        if (activeNodes > 0) {
+            rssiData.addEntry(new Entry(graphIndex, avg.rssi), 3);
+            latencyData.addEntry(new Entry(graphIndex, avg.latency), 3);
+            packetData.addEntry(new Entry(graphIndex, avg.loss), 3);
+            graphIndex++;
 
-        rssiData.notifyDataChanged();
-        latencyData.notifyDataChanged();
-        packetData.notifyDataChanged();
+            rssiData.notifyDataChanged(); latencyData.notifyDataChanged(); packetData.notifyDataChanged();
+            rssiChart.notifyDataSetChanged(); latencyChart.notifyDataSetChanged(); packetChart.notifyDataSetChanged();
 
-        rssiChart.notifyDataSetChanged();
-        latencyChart.notifyDataSetChanged();
-        packetChart.notifyDataSetChanged();
+            rssiChart.setVisibleXRangeMaximum(50f); latencyChart.setVisibleXRangeMaximum(50f); packetChart.setVisibleXRangeMaximum(50f);
+            rssiChart.moveViewToX(graphIndex); latencyChart.moveViewToX(graphIndex); packetChart.moveViewToX(graphIndex);
 
-        rssiChart.moveViewToX(i1);
-        latencyChart.moveViewToX(i2);
-        packetChart.moveViewToX(i3);
-
-        i1++;
-        i2++;
-        i3++;
+            rssiChart.invalidate(); latencyChart.invalidate(); packetChart.invalidate();
+        }
     }
 
-    private NodeData avg() {
+    private NodeData getAverages() {
         NodeData a = new NodeData();
         int c = 0;
-
         for (NodeData n : nodes) {
-            if (System.currentTimeMillis() - n.lastUpdate < 5000) {
-                a.rssi += n.rssi;
-                a.latency += n.latency;
-                a.loss += n.loss;
-                c++;
+            if (System.currentTimeMillis() - n.lastUpdate < 5000 && n.lastUpdate != 0) {
+                a.rssi += n.rssi; a.snr += n.snr; a.latency += n.latency;
+                a.jitter += n.jitter; a.loss += n.loss; c++;
             }
         }
-
         if (c > 0) {
-            a.rssi /= c;
-            a.latency /= c;
-            a.loss /= c;
+            a.rssi /= c; a.snr /= c; a.latency /= c; a.jitter /= c; a.loss /= c;
         }
-
         return a;
     }
 
-    private void updateStatus() {
-        String s = "";
-        for (int i = 0; i < 3; i++) {
-            s += "N" + (i + 1) + ":" +
-                    (System.currentTimeMillis() - nodes[i].lastUpdate < 5000 ? "ON " : "OFF ");
-        }
-        nodeStatusText.setText(s);
-    }
-
     private void setupChart(LineChart chart) {
-
         chart.setData(new LineData());
         chart.getLegend().setTextColor(Color.WHITE);
-
         chart.getDescription().setEnabled(false);
-        chart.getLegend().setEnabled(true);
-
         chart.setDrawGridBackground(false);
         chart.setDrawBorders(false);
-
         chart.getAxisRight().setEnabled(false);
-
-        // ❌ REMOVE GRID LINES
         chart.getXAxis().setDrawGridLines(false);
         chart.getAxisLeft().setDrawGridLines(false);
-
-        chart.getXAxis().setDrawAxisLine(false);
-        chart.getAxisLeft().setDrawAxisLine(false);
-
         chart.getXAxis().setTextColor(Color.GRAY);
         chart.getAxisLeft().setTextColor(Color.GRAY);
-
         chart.setTouchEnabled(true);
-        chart.setDragEnabled(true);
-        chart.setScaleEnabled(false);
-
-        chart.setBackgroundColor(Color.parseColor("#0B0F1A"));
+        chart.setBackgroundColor(Color.parseColor("#1A2235"));
     }
 
     private void initChartData(LineChart chart) {
-
         LineData data = new LineData();
+        int[] colors = {Color.RED, Color.GREEN, Color.YELLOW};
 
-        // Node 1
-        LineDataSet n1 = new LineDataSet(null, "Node 1");
-        n1.setColor(Color.RED);
-        n1.setDrawCircles(false);
-        n1.setMode(LineDataSet.Mode.CUBIC_BEZIER);
-        n1.setLineWidth(2f);
+        for (int i = 0; i < 3; i++) {
+            LineDataSet set = new LineDataSet(new ArrayList<>(), "Node " + (i + 1));
+            set.setColor(colors[i]); set.setDrawCircles(false); set.setLineWidth(2f);
+            data.addDataSet(set);
+        }
 
-        // Node 2
-        LineDataSet n2 = new LineDataSet(null, "Node 2");
-        n2.setColor(Color.GREEN);
-        n2.setDrawCircles(false);
-        n2.setMode(LineDataSet.Mode.CUBIC_BEZIER);
-        n2.setLineWidth(2f);
-
-        // Node 3
-        LineDataSet n3 = new LineDataSet(null, "Node 3");
-        n3.setColor(Color.YELLOW);
-        n3.setDrawCircles(false);
-        n3.setMode(LineDataSet.Mode.CUBIC_BEZIER);
-        n3.setLineWidth(2f);
-
-        // Average ⭐
-        LineDataSet avg = new LineDataSet(null, "Average");
-        avg.setColor(Color.WHITE);
-        avg.setDrawCircles(false);
-        avg.setMode(LineDataSet.Mode.CUBIC_BEZIER);
-        avg.setLineWidth(3f);
-        avg.enableDashedLine(10f, 5f, 0f);
-
-        data.addDataSet(n1);
-        data.addDataSet(n2);
-        data.addDataSet(n3);
+        LineDataSet avg = new LineDataSet(new ArrayList<>(), "Average");
+        avg.setColor(Color.WHITE); avg.setDrawCircles(false); avg.setLineWidth(3f); avg.enableDashedLine(10f, 5f, 0f);
         data.addDataSet(avg);
-
         chart.setData(data);
     }
 }
