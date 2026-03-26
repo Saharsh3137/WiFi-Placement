@@ -37,7 +37,7 @@ public class MainActivity extends AppCompatActivity {
     BluetoothSocket socket;
     InputStream inputStream;
     OutputStream outputStream;
-    String DEVICE_ADDRESS = "B0:CB:D8:C6:66:7E";
+    String DEVICE_ADDRESS = "B0:CB:D8:C6:66:7E"; // Update this if your ESP32 MAC changes
     UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
     boolean isProvisioning = false;
 
@@ -55,6 +55,10 @@ public class MainActivity extends AppCompatActivity {
     Handler demoHandler = new Handler(Looper.getMainLooper());
     Runnable demoRunnable;
     Random random = new Random();
+
+    // Demo Mode Realistic Data Trackers
+    float[] demoRssi = {-45f, -60f, -75f};
+    float[] demoLatency = {12f, 25f, 45f};
 
     @Override
     protected void onCreate(Bundle b) {
@@ -93,9 +97,15 @@ public class MainActivity extends AppCompatActivity {
 
         for (int i = 0; i < 3; i++) nodes[i] = new NodeData();
 
-        setupChart(rssiChart); initChartData(rssiChart);
-        setupChart(latencyChart); initChartData(latencyChart);
-        setupChart(packetChart); initChartData(packetChart);
+        // THE FIX: Pass specific Y-Axis minimums and maximums to lock the grid
+        setupChart(rssiChart, -100f, -15f);
+        initChartData(rssiChart);
+
+        setupChart(latencyChart, 0f, 150f);
+        initChartData(latencyChart);
+
+        setupChart(packetChart, 0f, 20f);
+        initChartData(packetChart);
 
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
 
@@ -109,8 +119,16 @@ public class MainActivity extends AppCompatActivity {
         disconnectButton.setOnClickListener(v -> disconnectBT());
         sendWifiBtn.setOnClickListener(v -> sendWiFiCredentials());
 
-        // NEW: Toggle WiFi Card Visibility
+        // THE FIX: Lock the Setup Button unless BT is connected or Demo is running
         toggleWifiBtn.setOnClickListener(v -> {
+            boolean isConnected = (socket != null && socket.isConnected());
+            boolean isDemo = demoModeSwitch.isChecked();
+
+            if (!isConnected && !isDemo) {
+                Toast.makeText(MainActivity.this, "Connect to hardware first!", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
             if (wifiCard.getVisibility() == View.VISIBLE) {
                 wifiCard.setVisibility(View.GONE);
             } else {
@@ -118,7 +136,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // NEW: Reset Session Data
         resetStatsBtn.setOnClickListener(v -> resetSessionData());
 
         setupNavigation();
@@ -134,7 +151,6 @@ public class MainActivity extends AppCompatActivity {
         uiHandler.post(uiRefreshRunnable);
     }
 
-    // --- NEW: WIPE DATA CLEAN FOR NEW ROOM MEASUREMENT ---
     private void resetSessionData() {
         for (int i = 0; i < 3; i++) nodes[i] = new NodeData();
         graphIndex = 0;
@@ -166,6 +182,7 @@ public class MainActivity extends AppCompatActivity {
         activeBtn.setTextColor(Color.parseColor("#00E5FF"));
     }
 
+    // THE FIX: Realistic Data Generation using Random Walk
     private void setupDemoMode() {
         demoModeSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
             if (isChecked) {
@@ -177,16 +194,22 @@ public class MainActivity extends AppCompatActivity {
                 demoRunnable = new Runnable() {
                     @Override
                     public void run() {
-                        for(int i = 1; i <= 3; i++) {
-                            int r = -40 - random.nextInt(40);
-                            int s = 20 + random.nextInt(30);
-                            // Generate realistic LiPo voltage (3.2V - 4.2V)
-                            float v = 3.2f + (random.nextFloat() * 1.0f);
-                            float l = random.nextFloat() < 0.1 ? 5.0f : 0.0f;
-                            int j = random.nextInt(10);
-                            int p = 5 + random.nextInt(25);
+                        for(int i = 0; i < 3; i++) {
+                            // "Walk" the RSSI up or down by max 2 points
+                            demoRssi[i] += (random.nextFloat() - 0.5f) * 4f;
+                            demoRssi[i] = Math.max(-95f, Math.min(-35f, demoRssi[i])); // Clamp
 
-                            String fakeData = String.format(Locale.US, "%d,%d,%d,%.2f,%.2f,%d,%d\n", i, r, s, v, l, j, p);
+                            // "Walk" the Latency up or down
+                            demoLatency[i] += (random.nextFloat() - 0.5f) * 5f;
+                            demoLatency[i] = Math.max(5f, Math.min(120f, demoLatency[i])); // Clamp
+
+                            int s = 25; // Static SNR for demo
+                            float v = 3.6f + (random.nextFloat() * 0.2f); // Stable Voltage
+                            float l = random.nextFloat() < 0.05 ? 2.0f : 0.0f; // Occasional 2% loss
+                            int j = random.nextInt(5);
+
+                            String fakeData = String.format(Locale.US, "%d,%d,%d,%.2f,%.2f,%d,%d\n",
+                                    i + 1, (int)demoRssi[i], s, v, l, j, (int)demoLatency[i]);
                             process(fakeData);
                         }
                         demoHandler.postDelayed(this, 200);
@@ -197,7 +220,7 @@ public class MainActivity extends AppCompatActivity {
                 demoHandler.removeCallbacks(demoRunnable);
                 statusText.setText("Disconnected");
                 statusText.setTextColor(Color.parseColor("#FF5252"));
-                resetSessionData(); // Clean up demo graphs
+                resetSessionData();
             }
         });
     }
@@ -264,7 +287,7 @@ public class MainActivity extends AppCompatActivity {
 
                 runOnUiThread(() -> {
                     Toast.makeText(MainActivity.this, "Deploying WiFi...", Toast.LENGTH_SHORT).show();
-                    wifiCard.setVisibility(View.GONE); // Hide it after sending
+                    wifiCard.setVisibility(View.GONE);
                     statusText.setText("Deploying...");
                     statusText.setTextColor(Color.CYAN);
                 });
@@ -338,7 +361,6 @@ public class MainActivity extends AppCompatActivity {
             qualityText.setText(String.format(Locale.US, "%.0f/100", finalScore));
         }
 
-        // --- NEW: Dynamic Battery & Ping Fleet Panel ---
         StringBuilder s = new StringBuilder();
         for (int i = 0; i < 3; i++) {
             boolean isOnline = (System.currentTimeMillis() - nodes[i].lastUpdate < 5000) && nodes[i].lastUpdate != 0;
@@ -408,17 +430,26 @@ public class MainActivity extends AppCompatActivity {
         return a;
     }
 
-    private void setupChart(LineChart chart) {
+    // THE FIX: Hardcoding the Y-Axis limits for a locked, stable grid
+    private void setupChart(LineChart chart, float minY, float maxY) {
         chart.setData(new LineData());
         chart.getLegend().setTextColor(Color.WHITE);
         chart.getDescription().setEnabled(false);
         chart.setDrawGridBackground(false);
         chart.setDrawBorders(false);
+
         chart.getAxisRight().setEnabled(false);
+
         chart.getXAxis().setDrawGridLines(false);
-        chart.getAxisLeft().setDrawGridLines(false);
         chart.getXAxis().setTextColor(Color.GRAY);
+
+        // Lock the Y-Axis to prevent bouncing
+        chart.getAxisLeft().setDrawGridLines(true);
+        chart.getAxisLeft().setGridColor(Color.parseColor("#2C3A5A"));
         chart.getAxisLeft().setTextColor(Color.GRAY);
+        chart.getAxisLeft().setAxisMinimum(minY);
+        chart.getAxisLeft().setAxisMaximum(maxY);
+
         chart.setTouchEnabled(true);
         chart.setBackgroundColor(Color.parseColor("#1A2235"));
     }
