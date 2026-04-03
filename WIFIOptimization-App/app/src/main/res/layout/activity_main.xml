@@ -3,7 +3,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0B0F1A">
+    android:background="#0B0F1A"
+    android:keepScreenOn="true">
 
     <RelativeLayout
         android:id="@+id/headerLayout"
@@ -274,38 +275,53 @@
             </LinearLayout>
         </ScrollView>
 
-        <RelativeLayout
+        <LinearLayout
             android:id="@+id/tabPlacement"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:orientation="vertical"
             android:visibility="gone"
             android:padding="16dp">
 
-            <LinearLayout
-                android:layout_width="wrap_content"
+            <Button
+                android:id="@+id/startCalibBtn"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:text="INITIATE MESH SWEEP"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:backgroundTint="#00E5FF"
+                android:textColor="#000000"/>
+
+            <TextView
+                android:id="@+id/calibStatusText"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:gravity="center"
-                android:layout_centerInParent="true">
+                android:text="Ready for dynamic mapping."
+                android:textAlignment="center"
+                android:textColor="#A0A0A0"
+                android:textSize="14sp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Heatmap Visualization"
-                    android:textColor="#00E5FF"
-                    android:textStyle="bold"
-                    android:textSize="22sp"
-                    android:layout_marginBottom="12dp"/>
+            <TextView
+                android:id="@+id/distanceReadoutText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Awaiting mesh data..."
+                android:textAlignment="center"
+                android:textColor="#A4F642"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Coming Soon..."
-                    android:textColor="#888888"
-                    android:textSize="16sp"/>
-            </LinearLayout>
+            <FrameLayout
+                android:id="@+id/heatmapContainer"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#1A2235"/>
 
-        </RelativeLayout>
+        </LinearLayout>
     </FrameLayout>
 
     <LinearLayout
