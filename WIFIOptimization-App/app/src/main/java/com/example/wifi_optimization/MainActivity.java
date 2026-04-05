@@ -2,7 +2,6 @@ package com.example.wifi_optimization;
 
 import android.Manifest;
 import android.bluetooth.*;
-import android.content.pm.PackageManager;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -687,25 +686,46 @@ public class MainActivity extends AppCompatActivity {
             heatPaint.setShader(new RadialGradient(n3x, n3y, gradRadius, c3, Color.TRANSPARENT, Shader.TileMode.CLAMP));
             canvas.drawCircle(n3x, n3y, gradRadius, heatPaint);
 
-            // 3. DRAW MESH GEOMETRY
+            // 3. DRAW MESH GEOMETRY & FIXED SIZE UI
+
+            // Get current scale to counteract zoom for UI elements
+            float[] values = new float[9];
+            transformMatrix.getValues(values);
+            float currentScale = values[Matrix.MSCALE_X];
+            if (currentScale == 0) currentScale = 1f;
+
+            linePaint.setStrokeWidth(5f / currentScale);
+
             Path path = new Path();
             path.moveTo(n1x, n1y); path.lineTo(n2x, n2y); path.lineTo(n3x, n3y); path.close();
             canvas.drawPath(path, linePaint);
 
             // Hardware Nodes
-            canvas.drawCircle(n1x, n1y, 25f, nodeDotPaint);
-            canvas.drawCircle(n2x, n2y, 25f, nodeDotPaint);
-            canvas.drawCircle(n3x, n3y, 25f, nodeDotPaint);
-            canvas.drawText("N1", n1x - 30, n1y - 40, textPaint);
-            canvas.drawText("N2", n2x - 30, n2y - 40, textPaint);
-            canvas.drawText("N3", n3x - 30, n3y - 40, textPaint);
+            float nodeRadius = 25f / currentScale;
+            canvas.drawCircle(n1x, n1y, nodeRadius, nodeDotPaint);
+            canvas.drawCircle(n2x, n2y, nodeRadius, nodeDotPaint);
+            canvas.drawCircle(n3x, n3y, nodeRadius, nodeDotPaint);
+
+            textPaint.setTextSize(40f / currentScale);
+            float nodeTextOffsetX = 30f / currentScale;
+            float nodeTextOffsetY = 40f / currentScale;
+
+            canvas.drawText("N1", n1x - nodeTextOffsetX, n1y - nodeTextOffsetY, textPaint);
+            canvas.drawText("N2", n2x - nodeTextOffsetX, n2y - nodeTextOffsetY, textPaint);
+            canvas.drawText("N3", n3x - nodeTextOffsetX, n3y - nodeTextOffsetY, textPaint);
 
             // Router Anchor
+            float routerDotRadius = 20f / currentScale;
             Paint routerDot = new Paint(); routerDot.setColor(Color.WHITE); routerDot.setStyle(Paint.Style.FILL);
-            canvas.drawCircle(rx, ry, 20f, routerDot);
-            Paint routerRing = new Paint(); routerRing.setColor(Color.GREEN); routerRing.setStyle(Paint.Style.STROKE); routerRing.setStrokeWidth(6f);
-            canvas.drawCircle(rx, ry, 35f, routerRing);
-            canvas.drawText("ROUTER", rx - 60, ry - 50, textPaint);
+            canvas.drawCircle(rx, ry, routerDotRadius, routerDot);
+
+            float routerRingRadius = 35f / currentScale;
+            Paint routerRing = new Paint(); routerRing.setColor(Color.GREEN); routerRing.setStyle(Paint.Style.STROKE); routerRing.setStrokeWidth(6f / currentScale);
+            canvas.drawCircle(rx, ry, routerRingRadius, routerRing);
+
+            float routerTextOffsetX = 60f / currentScale;
+            float routerTextOffsetY = 50f / currentScale;
+            canvas.drawText("ROUTER", rx - routerTextOffsetX, ry - routerTextOffsetY, textPaint);
 
             canvas.restore();
         }
