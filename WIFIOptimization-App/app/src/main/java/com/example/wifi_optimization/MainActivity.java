@@ -852,35 +852,6 @@ public class MainActivity extends AppCompatActivity {
             float dxPx = optX - rx, dyPx = optY - ry;
             targetRouterDistM = (float) Math.sqrt(dxPx * dxPx + dyPx * dyPx) / PPM;
 
-<<<<<<< Updated upstream
-=======
-            float[] routerPos = trilaterate(n1x, n1y, n2x, n2y, n3x, n3y, finalR1, finalR2, finalR3);
-            float rx = routerPos[0];
-            float ry = routerPos[1];
-            float[] optimal = getWeightedOptimalPosition(
-                    n1x, n1y, liveRssi1,
-                    n2x, n2y, liveRssi2,
-                    n3x, n3y, liveRssi3
-            );
-
-            float optX = optimal[0];
-            float optY = optimal[1];
-
-            // EMA smoothing
-            float alpha = 0.15f;
-            if (!routerInitialized) {
-                smoothRx = rx;
-                smoothRy = ry;
-                routerInitialized = true;
-            } else {
-                smoothRx = alpha * rx + (1f - alpha) * smoothRx;
-                smoothRy = alpha * ry + (1f - alpha) * smoothRy;
-            }
-            rx = smoothRx;
-            ry = smoothRy;
-
-            // Initial centering
->>>>>>> Stashed changes
             if (!isInitialCenterDone) {
                 float cx = (n1x + n2x + n3x) / 3f;
                 float cy = (n1y + n2y + n3y) / 3f;
@@ -919,14 +890,10 @@ public class MainActivity extends AppCompatActivity {
             float stepX = dWidth  / GRID_RES;
             float stepY = dHeight / GRID_RES;
 
-            float dN1 = Math.max(0.1f, (float) Math.sqrt((n1x - rx) * (n1x - rx) + (n1y - ry) * (n1y - ry)) / PPM);
-            float dN2 = Math.max(0.1f, (float) Math.sqrt((n2x - rx) * (n2x - rx) + (n2y - ry) * (n2y - ry)) / PPM);
-            float dN3 = Math.max(0.1f, (float) Math.sqrt((n3x - rx) * (n3x - rx) + (n3y - ry) * (n3y - ry)) / PPM);
-
-            // Expected RSSI at each sensor node based on dynamic on-screen geometry
-            float expN1 = TX_REF_DBM - (PATH_LOSS_EXP * (float) Math.log10(dN1));
-            float expN2 = TX_REF_DBM - (PATH_LOSS_EXP * (float) Math.log10(dN2));
-            float expN3 = TX_REF_DBM - (PATH_LOSS_EXP * (float) Math.log10(dN3));
+            // Expected RSSI at each sensor node (theoretical, from path-loss model)
+            float expN1 = TX_REF_DBM - (PATH_LOSS_EXP * (float) Math.log10(Math.max(0.1f, r1)));
+            float expN2 = TX_REF_DBM - (PATH_LOSS_EXP * (float) Math.log10(Math.max(0.1f, r2)));
+            float expN3 = TX_REF_DBM - (PATH_LOSS_EXP * (float) Math.log10(Math.max(0.1f, r3)));
 
             // Environmental warp = actual measured − model prediction
             float warp1 = (liveRssi1 != 0f) ? liveRssi1 - expN1 : 0f;
@@ -948,14 +915,14 @@ public class MainActivity extends AppCompatActivity {
                 // Base RSSI from log-distance path-loss model
                 float baseRssi = TX_REF_DBM - (PATH_LOSS_EXP * (float) Math.log10(distRouter));
 
-                // IDW (power 2) environmental correction from measured nodes for wider influence regions
+                // IDW (power 3) environmental correction from measured nodes
                 float dd1 = Math.max(0.1f, (float) Math.sqrt((px - n1x) * (px - n1x) + (py - n1y) * (py - n1y)) / PPM);
                 float dd2 = Math.max(0.1f, (float) Math.sqrt((px - n2x) * (px - n2x) + (py - n2y) * (py - n2y)) / PPM);
                 float dd3 = Math.max(0.1f, (float) Math.sqrt((px - n3x) * (px - n3x) + (py - n3y) * (py - n3y)) / PPM);
 
-                float iw1 = 1f / (dd1 * dd1);
-                float iw2 = 1f / (dd2 * dd2);
-                float iw3 = 1f / (dd3 * dd3);
+                float iw1 = 1f / (dd1 * dd1 * dd1);
+                float iw2 = 1f / (dd2 * dd2 * dd2);
+                float iw3 = 1f / (dd3 * dd3 * dd3);
                 float wTotal = iw1 + iw2 + iw3;
 
                 float envWarp = (warp1 * iw1 + warp2 * iw2 + warp3 * iw3) / wTotal;
@@ -1019,29 +986,9 @@ public class MainActivity extends AppCompatActivity {
             drawGlowingNode(canvas, n1x, n1y, liveRssi1, "N1", currentScale, pulse);
             drawGlowingNode(canvas, n2x, n2y, liveRssi2, "N2", currentScale, pulse);
             drawGlowingNode(canvas, n3x, n3y, liveRssi3, "N3", currentScale, pulse);
-            drawTarget(canvas, rx, ry, currentScale, slowPulse);
-            drawRouter(canvas, optX, optY, currentScale, pulse);
+            drawRouter(canvas, rx, ry, currentScale, pulse);
+            drawTarget(canvas, optX, optY, currentScale, slowPulse);
 
-            // router recommendation
-            Paint optimalPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            optimalPaint.setColor(Color.CYAN);
-            optimalPaint.setStyle(Paint.Style.STROKE);
-            optimalPaint.setStrokeWidth(5f);
-
-// outer ring
-            canvas.drawCircle(optX, optY, 30, optimalPaint);
-
-// inner dot
-            Paint dot = new Paint(Paint.ANTI_ALIAS_FLAG);
-            dot.setColor(Color.CYAN);
-            canvas.drawCircle(optX, optY, 10, dot);
-
-// label
-            textPaint.setColor(Color.CYAN);
-            canvas.drawText("OPTIMAL", optX - 50, optY - 40, textPaint);
-
-// reset
-            textPaint.setColor(Color.WHITE);
             canvas.restore();
 
             // ── Screen-space overlays (not affected by pan/zoom) ───────────
@@ -1162,7 +1109,6 @@ public class MainActivity extends AppCompatActivity {
             canvas.drawRect(barRect, gradP);
             canvas.drawRect(barRect, legendBorderPaint);
 
-<<<<<<< Updated upstream
             // Labels at positions proportional to the [-90,-50] dBm range
             // (barY = -50 top, barY+barH = -90 bottom, range = 40 dBm)
             String[] dbmLabels = {"-50", "-60", "-67", "-74", "-80", "-90"};
@@ -1172,74 +1118,6 @@ public class MainActivity extends AppCompatActivity {
                 float ly = barY + dbmPos[i] * barH;
                 legendTextPaint.setColor(Color.WHITE);
                 canvas.drawText(dbmLabels[i], barX + barW + 6f, ly + 8f, legendTextPaint);
-=======
-            float barLeft = boxLeft + 20f;
-            float barTop = boxTop + 40f;
-            float barRight = boxRight - 20f;
-            float barBottom = boxTop + 70f;
-
-            LinearGradient gradient = new LinearGradient(
-                    barLeft, barTop, barRight, barTop,
-                    new int[]{
-                            Color.parseColor("#8B0000"), // weak
-                            Color.RED,
-                            Color.parseColor("#FF8C00"),
-                            Color.YELLOW,
-                            Color.parseColor("#7CFC00"),
-                            Color.parseColor("#006400")  // strong
-                    },
-                    null,
-                    Shader.TileMode.CLAMP
-            );
-            legendBarPaint.setShader(gradient);
-            canvas.drawRoundRect(barLeft, barTop, barRight, barBottom, 12f, 12f, legendBarPaint);
-            legendBarPaint.setShader(null);
-
-            Paint smallText = new Paint(Paint.ANTI_ALIAS_FLAG);
-            smallText.setColor(Color.WHITE);
-            smallText.setTextSize(20f);
-
-            canvas.drawText("Weak", barLeft, barBottom + 22f, smallText);
-            canvas.drawText("Medium", (barLeft + barRight) / 2f - 35f, barBottom + 22f, smallText);
-            canvas.drawText("Strong", barRight - 55f, barBottom + 22f, smallText);
-        }
-
-        private float[] getWeightedOptimalPosition(
-                float x1, float y1, float rssi1,
-                float x2, float y2, float rssi2,
-                float x3, float y3, float rssi3) {
-
-            // 🔥 Convert RSSI → weight (weaker signal = higher weight)
-            float w1 = 100f + Math.abs(rssi1);
-            float w2 = 100f + Math.abs(rssi2);
-            float w3 = 100f + Math.abs(rssi3);
-
-            // Normalize (avoid divide by zero)
-            float sum = w1 + w2 + w3;
-            if (sum == 0) sum = 1f;
-
-            float cx = (w1 * x1 + w2 * x2 + w3 * x3) / sum;
-            float cy = (w1 * y1 + w2 * y2 + w3 * y3) / sum;
-
-            return new float[]{cx, cy};
-        }
-
-        private float[] trilaterate(float x1, float y1, float x2, float y2, float x3, float y3,
-                                    float r1, float r2, float r3) {
-
-            float A = 2f * (x2 - x1);
-            float B = 2f * (y2 - y1);
-            float C = r1 * r1 - r2 * r2 - x1 * x1 + x2 * x2 - y1 * y1 + y2 * y2;
-
-            float D = 2f * (x3 - x1);
-            float E = 2f * (y3 - y1);
-            float F = r1 * r1 - r3 * r3 - x1 * x1 + x3 * x3 - y1 * y1 + y3 * y3;
-
-            float denom = (A * E - B * D);
-
-            if (Math.abs(denom) < 1e-6f) {
-                return new float[]{(x1 + x2 + x3) / 3f, (y1 + y2 + y3) / 3f};
->>>>>>> Stashed changes
             }
 
             // Title "dBm" above bar
