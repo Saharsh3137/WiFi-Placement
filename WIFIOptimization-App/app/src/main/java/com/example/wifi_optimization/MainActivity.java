@@ -9,9 +9,7 @@ import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffXfermode;
-import android.graphics.RadialGradient;
+import android.graphics.LinearGradient;
 import android.graphics.Shader;
 import android.os.*;
 import android.view.GestureDetector;
@@ -177,35 +175,40 @@ public class MainActivity extends AppCompatActivity {
         }
 
         startCalibBtn.setEnabled(false);
-        startCalibBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.GRAY));
+        startCalibBtn.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(Color.GRAY));
 
+        if (demoModeSwitch.isChecked()) {
+            // ── DEMO: generate heatmap instantly, no countdown ──────────────
+            calibStatusText.setText("Generating Heatmap...");
+            calibStatusText.setTextColor(Color.parseColor("#FFD740"));
+            uiHandler.postDelayed(() -> {
+                process("MESH,-45.0,-55.0,-62.0,-40.5,-51.0,-65.0\n");
+                startCalibBtn.setEnabled(true);
+                startCalibBtn.setBackgroundTintList(
+                        android.content.res.ColorStateList.valueOf(Color.parseColor("#00C6FF")));
+            }, 400); // tiny delay so the status message is visible
+            return;
+        }
+
+        // ── HARDWARE: real 18-second sweep with per-zone countdown ──────────
         new CountDownTimer(18000, 1000) {
             public void onTick(long millisUntilFinished) {
                 int sec = (int) (millisUntilFinished / 1000);
-                if (sec > 13) calibStatusText.setText("Mapping Node 1 Network... (" + sec + "s)");
-                else if (sec > 8)
-                    calibStatusText.setText("Mapping Node 2 Network... (" + sec + "s)");
-                else if (sec > 3)
-                    calibStatusText.setText("Mapping Node 3 Network... (" + sec + "s)");
-                else calibStatusText.setText("Triangulating Router... (" + sec + "s)");
-
+                if (sec > 13) calibStatusText.setText("Scanning Zone 1... (" + sec + "s)");
+                else if (sec > 8) calibStatusText.setText("Scanning Zone 2... (" + sec + "s)");
+                else if (sec > 3) calibStatusText.setText("Scanning Zone 3... (" + sec + "s)");
+                else calibStatusText.setText("Building Heatmap... (" + sec + "s)");
                 calibStatusText.setTextColor(Color.parseColor("#FFD740"));
-
-                if (sec == 17 && !demoModeSwitch.isChecked()) {
-                    try {
-                        outputStream.write("CALIBRATE\n".getBytes());
-                        outputStream.flush();
-                    } catch (Exception e) {
-                    }
+                if (sec == 17) {
+                    try { outputStream.write("CALIBRATE\n".getBytes()); outputStream.flush(); }
+                    catch (Exception ignored) {}
                 }
             }
-
             public void onFinish() {
-                if (demoModeSwitch.isChecked()) {
-                    process("MESH,-45.0,-55.0,-62.0,-40.5,-51.0,-65.0\n");
-                }
                 startCalibBtn.setEnabled(true);
-                startCalibBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#00E5FF")));
+                startCalibBtn.setBackgroundTintList(
+                        android.content.res.ColorStateList.valueOf(Color.parseColor("#00C6FF")));
             }
         }.start();
     }
@@ -250,6 +253,8 @@ public class MainActivity extends AppCompatActivity {
                 statusText.setText("Demo Mode Active");
                 statusText.setTextColor(Color.parseColor("#FFD740"));
                 wifiCard.setVisibility(View.GONE);
+                // Setup button hidden in demo mode — no real BT connection
+                toggleWifiBtn.setVisibility(View.GONE);
 
                 demoRunnable = new Runnable() {
                     @Override
@@ -301,6 +306,8 @@ public class MainActivity extends AppCompatActivity {
                     statusText.setTextColor(Color.GREEN);
                     connectButton.setVisibility(View.GONE);
                     disconnectButton.setVisibility(View.VISIBLE);
+                    // Show Setup only when truly connected (not in demo)
+                    toggleWifiBtn.setVisibility(View.VISIBLE);
                 });
                 readData();
             } catch (Exception e) {
@@ -322,6 +329,8 @@ public class MainActivity extends AppCompatActivity {
         connectButton.setVisibility(View.VISIBLE);
         disconnectButton.setVisibility(View.GONE);
         wifiCard.setVisibility(View.GONE);
+        // Hide Setup button when not connected
+        toggleWifiBtn.setVisibility(View.GONE);
     }
 
     private void sendWiFiCredentials() {
@@ -412,9 +421,9 @@ public class MainActivity extends AppCompatActivity {
                     heatmapView.updateMeshGeometry((float) d12, (float) d13, (float) d23, (float) r1, (float) r2, (float) r3);
 
                     runOnUiThread(() -> {
-                        calibStatusText.setText("Mesh Complete! Spatial Matrix built.");
+                        calibStatusText.setText("Heatmap Complete!");
                         calibStatusText.setTextColor(Color.parseColor("#00E5FF"));
-                        distanceReadoutText.setText(String.format(Locale.US, "Router Distances -> N1: %.1fm | N2: %.1fm | N3: %.1fm", r1, r2, r3));
+                        // distanceReadoutText dynamically handled in updateUI()
                     });
                 }
                 return;
@@ -465,24 +474,35 @@ public class MainActivity extends AppCompatActivity {
         StringBuilder s = new StringBuilder();
         for (int i = 0; i < 3; i++) {
             boolean isOnline = (System.currentTimeMillis() - nodes[i].lastUpdate < 5000) && nodes[i].lastUpdate != 0;
-            s.append("Node ").append(i + 1).append(": ");
+            // Node header on its own line
+            s.append("Node ").append(i + 1).append(":\n");
             if (isOnline) {
                 float runningAvgRssi = 0;
                 if (nodes[i].rssiCount > 0) {
                     runningAvgRssi = (float) (nodes[i].totalRssiSum / nodes[i].rssiCount);
                 }
-                s.append("🟢 ")
-                        .append(String.format(Locale.US, "%.0fms", nodes[i].latency))
-                        .append("  |  🔋 ")
-                        .append(String.format(Locale.US, "%.1fV", nodes[i].voltage))
-                        .append("  |  Avg: ")
+                // Details indented on next line
+                s.append("  🟢 ")
+                        .append(String.format(Locale.US, "%.0f ms", nodes[i].latency))
+                        .append("  🔋 ")
+                        .append(String.format(Locale.US, "%.1f V", nodes[i].voltage))
+                        .append("  ")
                         .append(String.format(Locale.US, "%.1f dBm", runningAvgRssi));
             } else {
-                s.append("🔴 Offline");
+                s.append("  🔴 Offline");
             }
             if (i < 2) s.append("\n");
         }
         nodeStatusText.setText(s.toString());
+
+        // Update the dynamic distance text below the heatmap sweep status
+        if (heatmapView.r1 > 0) {
+            distanceReadoutText.setText(String.format(Locale.US,
+                "N1: %.1f m  ·  N2: %.1f m  ·  N3: %.1f m\nTarget ↔ Router: %.1f m",
+                heatmapView.r1, heatmapView.r2, heatmapView.r3, heatmapView.targetRouterDistM));
+        } else {
+            distanceReadoutText.setText("Awaiting mesh data…");
+        }
 
         updateGraphs(avg);
 
@@ -558,6 +578,7 @@ public class MainActivity extends AppCompatActivity {
     private void setupChart(LineChart chart, float minY, float maxY) {
         chart.setData(new LineData());
         chart.getLegend().setTextColor(Color.WHITE);
+        chart.getLegend().setTextSize(11f);
         chart.getDescription().setEnabled(false);
         chart.setDrawGridBackground(false);
         chart.setDrawBorders(false);
@@ -569,8 +590,15 @@ public class MainActivity extends AppCompatActivity {
         chart.getAxisLeft().setTextColor(Color.GRAY);
         chart.getAxisLeft().setAxisMinimum(minY);
         chart.getAxisLeft().setAxisMaximum(maxY);
+        // ── Zoom & pan ───────────────────────────────────────────────
         chart.setTouchEnabled(true);
-        chart.setBackgroundColor(Color.parseColor("#1A2235"));
+        chart.setDragEnabled(true);           // finger drag to pan
+        chart.setScaleEnabled(true);          // pinch to zoom on both axes
+        chart.setPinchZoom(true);             // single-finger pinch zoom
+        chart.setDoubleTapToZoomEnabled(true);// double-tap resets zoom
+        chart.setHighlightPerDragEnabled(true);
+        chart.setBackgroundColor(Color.parseColor("#090F1C"));
+        chart.setGridBackgroundColor(Color.parseColor("#141E30"));
     }
 
     private void initChartData(LineChart chart) {
@@ -615,10 +643,16 @@ public class MainActivity extends AppCompatActivity {
         Paint legendBorderPaint, legendTextPaint, scalePaint;
 
         // ── Geometry ─────────────────────────────────────────────────────────
-        float d12 = 1f, d13 = 1f, d23 = 1f, r1 = 0f, r2 = 0f, r3 = 0f;
+        public float d12 = 1f, d13 = 1f, d23 = 1f, r1 = 0f, r2 = 0f, r3 = 0f;
+        public float targetRouterDistM = 0f;
 
         // ── Live RSSI ────────────────────────────────────────────────────────
         float liveRssi1 = -65f, liveRssi2 = -72f, liveRssi3 = -80f;
+
+        // ── Iso-contour levels ───────────────────────────────────────────
+        // dBm thresholds and display colours — exactly matching the palette stops below
+        private static final float[] ISO_DBM    = {-60f, -67f, -74f, -80f};
+        private static final int[]   ISO_COLORS = {0xFF00D050, 0xFFF5C000, 0xFFE86000, 0xFFCC1010};
 
         // ── Touch / Pan / Zoom ───────────────────────────────────────────────
         Matrix transformMatrix = new Matrix();
@@ -629,10 +663,6 @@ public class MainActivity extends AppCompatActivity {
         // ── Animation ticker ─────────────────────────────────────────────────
         private long animStartTime = System.currentTimeMillis();
 
-        // ── Iso-contour levels ───────────────────────────────────────────────
-        // dBm thresholds and their display colours (better → worse)
-        private static final float[] ISO_DBM    = {-60f, -67f, -74f, -80f};
-        private static final int[]   ISO_COLORS = {0xFF00FF96, 0xFFFFFF00, 0xFFFF8800, 0xFFFF2200};
 
         // ── Realistic indoor path loss (10 × n, n = 2.7 for 2.4 GHz) ────────
         private static final float PATH_LOSS_EXP = 27.0f;
@@ -788,6 +818,10 @@ public class MainActivity extends AppCompatActivity {
             float optX = (n1x * sw1 + n2x * sw2 + n3x * sw3) / swTotal;
             float optY = (n1y * sw1 + n2y * sw2 + n3y * sw3) / swTotal;
 
+            // Expose target-to-router distance (metres) for UI display
+            float dxPx = optX - rx, dyPx = optY - ry;
+            targetRouterDistM = (float) Math.sqrt(dxPx * dxPx + dyPx * dyPx) / PPM;
+
             if (!isInitialCenterDone) {
                 float cx = (n1x + n2x + n3x) / 3f;
                 float cy = (n1y + n2y + n3y) / 3f;
@@ -874,34 +908,7 @@ public class MainActivity extends AppCompatActivity {
                     new android.graphics.RectF(dStartX, dStartY, dStartX + dWidth, dStartY + dHeight);
             canvas.drawBitmap(heatMapBitmap, null, heatRect, bmpPaint);
 
-            // ================================================================
-            // 3. ISO-CONTOUR LINES – dBm signal-level rings labelled on-map
-            //    distance = 10^((TX_REF - targetRSSI) / PATH_LOSS_EXP)
-            // ================================================================
-            for (int ci = 0; ci < ISO_DBM.length; ci++) {
-                float isoRssi  = ISO_DBM[ci];
-                float isoDistM = (float) Math.pow(10, (TX_REF_DBM - isoRssi) / PATH_LOSS_EXP);
-                float isoDistPx = isoDistM * PPM;
-
-                int isoC = ISO_COLORS[ci];
-                contourPaint.setColor(Color.argb(115,
-                        Color.red(isoC), Color.green(isoC), Color.blue(isoC)));
-                contourPaint.setStrokeWidth(2.5f / currentScale);
-                contourPaint.setPathEffect(new android.graphics.DashPathEffect(
-                        new float[]{12f / currentScale, 9f / currentScale}, 0f));
-                canvas.drawCircle(rx, ry, isoDistPx, contourPaint);
-
-                // Small dBm label on the right side of the ring
-                Paint isoLabel = new Paint(Paint.ANTI_ALIAS_FLAG);
-                isoLabel.setColor(Color.argb(210,
-                        Color.red(isoC), Color.green(isoC), Color.blue(isoC)));
-                isoLabel.setTextSize(22f / currentScale);
-                isoLabel.setShadowLayer(5f / currentScale, 0, 1f, Color.BLACK);
-                String isoTxt = String.format(Locale.US, "%.0fdBm", isoRssi);
-                canvas.drawText(isoTxt,
-                        rx + isoDistPx + 6f / currentScale,
-                        ry + 8f / currentScale, isoLabel);
-            }
+            // (iso-contour dashed rings removed per user request)
 
             // ================================================================
             // 4. MESH TRIANGLE
@@ -917,6 +924,31 @@ public class MainActivity extends AppCompatActivity {
             // ================================================================
             optimalLinePaint.setStrokeWidth(3f / currentScale);
             canvas.drawLine(rx, ry, optX, optY, optimalLinePaint);
+
+            if (targetRouterDistM > 0.1f) {
+                float midX = (rx + optX) / 2f;
+                float midY = (ry + optY) / 2f;
+                
+                float angle = (float) Math.atan2(optY - ry, optX - rx);
+                float offX = (float) -Math.sin(angle) * (15f / currentScale);
+                float offY = (float) Math.cos(angle) * (15f / currentScale);
+                
+                Paint distTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+                distTextPaint.setColor(Color.WHITE);
+                distTextPaint.setTextSize(26f / currentScale);
+                distTextPaint.setTextAlign(Paint.Align.CENTER);
+                distTextPaint.setShadowLayer(4f / currentScale, 0, 2f / currentScale, Color.parseColor("#77000000"));
+                
+                String distStr = String.format(Locale.US, "%.1f m", targetRouterDistM);
+                
+                canvas.save();
+                canvas.translate(midX + offX, midY + offY);
+                float rotDeg = (float) Math.toDegrees(angle);
+                if (rotDeg > 90 || rotDeg < -90) rotDeg += 180;
+                canvas.rotate(rotDeg);
+                canvas.drawText(distStr, 0, 0, distTextPaint);
+                canvas.restore();
+            }
 
             // ================================================================
             // 6. NODES, ROUTER & TARGET MARKER
@@ -1028,14 +1060,14 @@ public class MainActivity extends AppCompatActivity {
             canvas.drawRoundRect(panel, 14f, 14f, bg);
             canvas.drawRoundRect(panel, 14f, 14f, legendBorderPaint);
 
-            // Build gradient from bottom (-90) to top (-50 = excellent)
+            // Gradient sampled at exact ISO-contour dBm levels (bottom = worst, top = best)
             int[] gradColors = {
-                getColorForRssi(-90f, 255),
+                getColorForRssi(-90f, 255),  // bottom
                 getColorForRssi(-80f, 255),
-                getColorForRssi(-72f, 255),
-                getColorForRssi(-65f, 255),
-                getColorForRssi(-58f, 255),
-                getColorForRssi(-50f, 255)
+                getColorForRssi(-74f, 255),
+                getColorForRssi(-67f, 255),
+                getColorForRssi(-60f, 255),
+                getColorForRssi(-50f, 255)   // top
             };
             android.graphics.LinearGradient grad = new android.graphics.LinearGradient(
                     barX, barY + barH, barX, barY,
@@ -1047,14 +1079,15 @@ public class MainActivity extends AppCompatActivity {
             canvas.drawRect(barRect, gradP);
             canvas.drawRect(barRect, legendBorderPaint);
 
-            // Labels at evenly spaced positions
-            String[] dbmLabels = {"-50", "-62", "-72", "-80", "-90"};
-            float[] dbmPos     = {0f, 0.3f, 0.55f, 0.75f, 1.0f};
-            legendTextPaint.setTextSize(24f);
+            // Labels at positions proportional to the [-90,-50] dBm range
+            // (barY = -50 top, barY+barH = -90 bottom, range = 40 dBm)
+            String[] dbmLabels = {"-50", "-60", "-67", "-74", "-80", "-90"};
+            float[]  dbmPos    = {0f, 0.25f, 0.425f, 0.60f, 0.75f, 1.0f};
+            legendTextPaint.setTextSize(23f);
             for (int i = 0; i < dbmLabels.length; i++) {
                 float ly = barY + dbmPos[i] * barH;
                 legendTextPaint.setColor(Color.WHITE);
-                canvas.drawText(dbmLabels[i], barX + barW + 6f, ly + 9f, legendTextPaint);
+                canvas.drawText(dbmLabels[i], barX + barW + 6f, ly + 8f, legendTextPaint);
             }
 
             // Title "dBm" above bar
@@ -1141,42 +1174,41 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * 8-stop scientific colormap: near-black void → deep crimson → red →
-         * dark-orange → amber → yellow-green → green → cyan-green.
-         * Maps WiFi RSSI range [-90, -50] dBm to the full palette.
+         * ISO-contour-ALIGNED colormap.
+         * Colour transitions occur at EXACTLY the dBm values of the dashed rings:
+         *   -80 dBm → RED  |  -74 → ORANGE  |  -67 → AMBER  |  -60 → GREEN
+         * This ensures the heatmap green blob fills precisely to the -60 dBm ring,
+         * amber fills to the -67 ring, orange to -74, red to -80.
          */
         private int getColorForRssi(float rssi, int alpha) {
-            float t = (rssi - (-90f)) / ((-50f) - (-90f)); // normalise to [0,1]
-            t = Math.max(0f, Math.min(1f, t));
-
-            int[] palette = {
-                Color.parseColor("#0D0221"),  // -90  near-black void
-                Color.parseColor("#5C0A1A"),  // -85  deep crimson
-                Color.parseColor("#CC1818"),  // -79  saturated red   (unusable)
-                Color.parseColor("#E85000"),  // -73  dark orange      (poor)
-                Color.parseColor("#F5A500"),  // -67  amber / golden   (fair)
-                Color.parseColor("#D8EE18"),  // -61  yellow-green     (good)
-                Color.parseColor("#3CE83C"),  // -55  green            (very good)
-                Color.parseColor("#00FFAA"),  // -50+ bright cyan-green (excellent)
+            // Non-uniform stops — placed at exact ISO-contour dBm values
+            final float[] dBmStops = { -90f,      -80f,      -74f,      -67f,      -60f,      -50f      };
+            final int[]   palette  = {
+                Color.parseColor("#0A0114"),  // -90  deep void (no signal)
+                Color.parseColor("#CC1010"),  // -80  pure red   ← -80 dBm iso ring
+                Color.parseColor("#E86000"),  // -74  dark orange ← -74 dBm iso ring
+                Color.parseColor("#F5C000"),  // -67  golden amber ← -67 dBm iso ring
+                Color.parseColor("#00D050"),  // -60  GREEN ← -60 dBm iso ring (user request)
+                Color.parseColor("#00FFBB"),  // -50+ bright cyan-green (excellent)
             };
 
-            float scaled = t * (palette.length - 1);
-            int   idx    = (int) scaled;
-            float frac   = scaled - idx;
+            // Clamp to valid range
+            rssi = Math.max(dBmStops[0], Math.min(rssi, dBmStops[dBmStops.length - 1]));
 
-            if (idx >= palette.length - 1) {
-                int c = palette[palette.length - 1];
-                return Color.argb(alpha, Color.red(c), Color.green(c), Color.blue(c));
+            // Find which segment this RSSI falls in and linearly interpolate
+            for (int i = 0; i < dBmStops.length - 1; i++) {
+                if (rssi <= dBmStops[i + 1]) {
+                    float t = (rssi - dBmStops[i]) / (dBmStops[i + 1] - dBmStops[i]);
+                    int ca = palette[i], cb = palette[i + 1];
+                    int r = (int)(Color.red(ca)   + t * (Color.red(cb)   - Color.red(ca)));
+                    int g = (int)(Color.green(ca) + t * (Color.green(cb) - Color.green(ca)));
+                    int b = (int)(Color.blue(ca)  + t * (Color.blue(cb)  - Color.blue(ca)));
+                    return Color.argb(alpha, r, g, b);
+                }
             }
-
-            int ca = palette[idx], cb = palette[idx + 1];
-            int r = (int)(Color.red(ca)   + frac * (Color.red(cb)   - Color.red(ca)));
-            int g = (int)(Color.green(ca) + frac * (Color.green(cb) - Color.green(ca)));
-            int b = (int)(Color.blue(ca)  + frac * (Color.blue(cb)  - Color.blue(ca)));
-            return Color.argb(alpha, r, g, b);
+            int c = palette[palette.length - 1];
+            return Color.argb(alpha, Color.red(c), Color.green(c), Color.blue(c));
         }
     }
 }
-// =========================================================================
-// END OF REPLACEMENT CLASS
-// =========================================================================}
+
