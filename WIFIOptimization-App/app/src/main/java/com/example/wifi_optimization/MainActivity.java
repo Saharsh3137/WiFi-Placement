@@ -539,12 +539,14 @@ public class MainActivity extends AppCompatActivity {
             latencyChart.notifyDataSetChanged();
             packetChart.notifyDataSetChanged();
 
-            rssiChart.setVisibleXRangeMaximum(50f);
-            latencyChart.setVisibleXRangeMaximum(50f);
-            packetChart.setVisibleXRangeMaximum(50f);
-            rssiChart.moveViewToX(graphIndex);
-            latencyChart.moveViewToX(graphIndex);
-            packetChart.moveViewToX(graphIndex);
+            // Only auto-scroll to the newest data if the user hasn't manually panned back to look at history
+            boolean autoScroll = rssiChart.getHighestVisibleX() >= (graphIndex - 3);
+
+            if (autoScroll) {
+                rssiChart.moveViewToX(graphIndex);
+                latencyChart.moveViewToX(graphIndex);
+                packetChart.moveViewToX(graphIndex);
+            }
 
             rssiChart.invalidate();
             latencyChart.invalidate();
@@ -593,9 +595,10 @@ public class MainActivity extends AppCompatActivity {
         // ── Zoom & pan ───────────────────────────────────────────────
         chart.setTouchEnabled(true);
         chart.setDragEnabled(true);           // finger drag to pan
-        chart.setScaleEnabled(true);          // pinch to zoom on both axes
-        chart.setPinchZoom(true);             // single-finger pinch zoom
-        chart.setDoubleTapToZoomEnabled(true);// double-tap resets zoom
+        chart.setScaleXEnabled(true);         // allow zooming on time (X) axis
+        chart.setScaleYEnabled(true);         // allow zooming vertically (Y) axis
+        chart.setPinchZoom(false);            // separate X/Y zoom behaviour (allows independent horizontal/vertical stretch)
+        chart.setDoubleTapToZoomEnabled(true);// double-tap to zoom in on time
         chart.setHighlightPerDragEnabled(true);
         chart.setBackgroundColor(Color.parseColor("#090F1C"));
         chart.setGridBackgroundColor(Color.parseColor("#141E30"));
@@ -739,11 +742,37 @@ public class MainActivity extends AppCompatActivity {
                     });
         }
 
+        private float mRotationAngle = 0f;
+
         @Override
         public boolean onTouchEvent(MotionEvent event) {
-            scaleDetector.onTouchEvent(event);
-            gestureDetector.onTouchEvent(event);
-            return true;
+            boolean handled = scaleDetector.onTouchEvent(event);
+            handled = gestureDetector.onTouchEvent(event) || handled;
+
+            // Manual 2-finger rotation tracking
+            if (event.getPointerCount() == 2) {
+                float dx = event.getX(1) - event.getX(0);
+                float dy = event.getY(1) - event.getY(0);
+                float currentAngle = (float) Math.toDegrees(Math.atan2(dy, dx));
+
+                int action = event.getActionMasked();
+                if (action == MotionEvent.ACTION_POINTER_DOWN) {
+                    mRotationAngle = currentAngle;
+                } else if (action == MotionEvent.ACTION_MOVE) {
+                    float angleDiff = currentAngle - mRotationAngle;
+                    // Prevent massive jumps if fingers cross axes
+                    if (Math.abs(angleDiff) < 45f) {
+                        float cx = (event.getX(0) + event.getX(1)) / 2f;
+                        float cy = (event.getY(0) + event.getY(1)) / 2f;
+                        transformMatrix.postRotate(angleDiff, cx, cy);
+                        invalidate();
+                    }
+                    mRotationAngle = currentAngle;
+                }
+                handled = true;
+            }
+
+            return handled || super.onTouchEvent(event);
         }
 
         public void updateLiveSignals(float rssi1, float rssi2, float rssi3) {
